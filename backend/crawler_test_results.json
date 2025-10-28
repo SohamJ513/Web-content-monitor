@@ -1,0 +1,33 @@
+[
+  {
+    "name": "HTTPBin Test Page",
+    "url": "https://httpbin.org/html",
+    "status": "no_content",
+    "html_length": 3739,
+    "time_taken": 2.230608
+  },
+  {
+    "name": "Example Domain",
+    "url": "https://example.com",
+    "status": "success",
+    "html_length": 1256,
+    "content_length": 152,
+    "time_taken": 1.428513,
+    "preview": "This domain is for use in illustrative examples in documents. You may use this\ndomain in literature without prior coordination or asking for permission."
+  },
+  {
+    "name": "Python Documentation",
+    "url": "https://docs.python.org/3/",
+    "status": "success",
+    "html_length": 17874,
+    "content_length": 387,
+    "time_taken": 0.495838,
+    "preview": "Welcome! This is the official documentation for Python 3.13.7.\nall \"What's new\" documents since Python 2.0\nStart here: a tour of Python's syntax and features\nHow to install, configure, and use Python\nThird-party modules and PyPI.org\nPublishing modules for use by other people\nFrequently asked questio..."
+  },
+  {
+    "name": "Non-existent Page",
+    "url": "https://httpbin.org/status/404",
+    "status": "fetch_failed",
+    "time_taken": 10.130966
+  }
+]
