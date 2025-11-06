@@ -62,6 +62,30 @@ class User(UserBase):
     )
 
 # -------------------------------
+# Password Reset Models
+# -------------------------------
+class PasswordResetTokenBase(BaseModel):
+    token: str
+    user_id: str  # ✅ CHANGED: Use string instead of PyObjectId
+    expires_at: datetime
+
+class PasswordResetTokenCreate(PasswordResetTokenBase):
+    pass
+
+class PasswordResetToken(PasswordResetTokenBase):
+    id: Optional[str] = Field(alias="_id", default=None)  # ✅ CHANGED: Use string instead of PyObjectId
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    used: bool = Field(default=False)
+    used_at: Optional[datetime] = None
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str},
+        ser_json_by_alias=True,
+    )
+
+# -------------------------------
 # Tracked Page Models
 # -------------------------------
 class TrackedPageBase(BaseModel):

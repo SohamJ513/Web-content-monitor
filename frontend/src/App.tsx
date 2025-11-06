@@ -6,9 +6,10 @@ import CssBaseline from '@mui/material/CssBaseline';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Layout from './components/Layout/Layout';
-import LandingPage from './pages/LandingPage'; // Import the new LandingPage
+import LandingPage from './pages/LandingPage';
 import Login from './components/Auth/Login';
 import Register from './components/Auth/Register';
+import ResetPassword from './components/Auth/ResetPassword'; // ✅ Import ResetPassword
 import Dashboard from './components/Dashboard/Dashboard';
 import FactCheckPage from './pages/FactCheckPage';
 import DirectFactCheckPage from './pages/DirectFactCheckPage';
@@ -48,6 +49,27 @@ const PublicRoute: React.FC<PublicRouteProps> = ({ children }) => {
   return !isAuthenticated ? <>{children}</> : <Navigate to="/dashboard" />;
 };
 
+// ✅ Add LandingRoute component to handle authentication redirects for landing page
+const LandingRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated, loading } = useAuth();
+  
+  if (loading) return <LoadingSpinner />;
+  
+  // If user is authenticated, redirect to dashboard
+  // Otherwise, show the landing page
+  return isAuthenticated ? <Navigate to="/dashboard" replace /> : <>{children}</>;
+};
+
+// ✅ Add AuthAwareRoute for 404 handling
+const AuthAwareRoute: React.FC = () => {
+  const { isAuthenticated, loading } = useAuth();
+  
+  if (loading) return <LoadingSpinner />;
+  
+  // Redirect to appropriate page based on auth status
+  return <Navigate to={isAuthenticated ? "/dashboard" : "/"} replace />;
+};
+
 function App() {
   return (
     <ThemeProvider theme={theme}>
@@ -55,10 +77,14 @@ function App() {
       <AuthProvider>
         <Router>
           <Routes>
-            {/* ✅ Landing Page - Public Route */}
-            <Route path="/" element={<LandingPage />} />
+            {/* ✅ Fixed Landing Page - Now checks authentication */}
+            <Route path="/" element={
+              <LandingRoute>
+                <LandingPage />
+              </LandingRoute>
+            } />
             
-            {/* Public Routes */}
+            {/* Public Routes - Only accessible when NOT authenticated */}
             <Route path="/login" element={
               <PublicRoute>
                 <Login />
@@ -70,7 +96,14 @@ function App() {
               </PublicRoute>
             } />
             
-            {/* Protected Routes */}
+            {/* ✅ Reset Password Route - Public route (no auth required) */}
+            <Route path="/reset-password/:token" element={
+              <PublicRoute>
+                <ResetPassword />
+              </PublicRoute>
+            } />
+            
+            {/* Protected Routes - Only accessible when authenticated */}
             <Route path="/dashboard" element={
               <ProtectedRoute>
                 <Layout>
@@ -97,8 +130,8 @@ function App() {
               </ProtectedRoute>
             } />
             
-            {/* Catch all route - redirect to landing page */}
-            <Route path="*" element={<Navigate to="/" />} />
+            {/* ✅ Improved catch-all route - redirects based on auth status */}
+            <Route path="*" element={<AuthAwareRoute />} />
           </Routes>
         </Router>
       </AuthProvider>

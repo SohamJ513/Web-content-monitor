@@ -110,6 +110,22 @@ export interface HealthResponse {
   scheduler_running: boolean;
 }
 
+export interface DeleteResponse {
+  status: string;
+  message: string;
+}
+
+// ✅ Add Forgot Password Types
+export interface ForgotPasswordResponse {
+  message: string;
+  status: string;
+}
+
+export interface ResetPasswordResponse {
+  message: string;
+  status: string;
+}
+
 // ---------------- Auth API ----------------
 export const authAPI = {
   register: (userData: { email: string; password: string }) =>
@@ -124,6 +140,16 @@ export const authAPI = {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
   },
+
+  // ✅ ADDED: Forgot Password endpoints
+  forgotPassword: (email: string) =>
+    api.post<ForgotPasswordResponse>('/auth/forgot-password', { email }),
+
+  resetPassword: (token: string, newPassword: string) =>
+    api.post<ResetPasswordResponse>('/auth/reset-password', { 
+      token, 
+      new_password: newPassword 
+    }),
 };
 
 // ---------------- Pages API ----------------
@@ -138,13 +164,13 @@ export const pagesAPI = {
     check_interval_minutes?: number 
   }) => api.post<TrackedPage>('/pages', pageData),
   
-  // ✅ Note: Update/Delete endpoints don't exist in your backend main.py
-  // Uncomment these when you add them to your FastAPI backend
-  // update: (id: string, pageData: Partial<TrackedPage>) =>
-  //   api.put<TrackedPage>(`/pages/${id}`, pageData),
-  // delete: (id: string) => api.delete(`/pages/${id}`),
+  // ✅ ADDED: Delete endpoint
+  delete: (id: string) => api.delete<DeleteResponse>(`/pages/${id}`),
   
   getVersions: (pageId: string) => api.get<PageVersion[]>(`/pages/${pageId}/versions`),
+  
+  // ✅ ADDED: Check if page is already tracked by URL
+  getByUrl: (url: string) => api.get<TrackedPage>(`/pages/by-url?url=${encodeURIComponent(url)}`),
 };
 
 // ---------------- Change Logs API ----------------

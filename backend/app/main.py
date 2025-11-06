@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status, Query
+from fastapi import FastAPI, HTTPException, Depends, status, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from datetime import datetime, timedelta
@@ -9,20 +9,30 @@ from pydantic import BaseModel
 from bson import ObjectId   # ✅ For ObjectId validation
 import asyncio
 import logging
+from contextlib import asynccontextmanager
+
+# ✅ ADD THESE LINES to load environment variables
+from dotenv import load_dotenv
+import os
+
+# ✅ Load environment variables from .env file
+load_dotenv()
 
 # ✅ Import database + scheduler
 from .database import (
     get_user_by_email, create_user, verify_password,
     get_tracked_pages, get_tracked_page, create_tracked_page, update_tracked_page,
-    get_page_versions, create_change_log, get_change_logs_for_user, create_page_version
+    get_page_versions, create_change_log, get_change_logs_for_user, create_page_version,
+    get_tracked_page_by_url, get_user_page_count, delete_tracked_page  # ✅ ADDED: Import delete_tracked_page
 )
 from .scheduler import MonitoringScheduler
 
 # ✅ Import your crawler
 from .crawler import ContentFetcher
 
-# ✅ Import fact check router
+# ✅ Import routers
 from .routers import fact_check
+from .routers import auth  # ✅ ADDED: Import auth router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,28 +42,12 @@ SECRET_KEY = "your-secret-key-change-in-production"  # Change this in production
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# Create FastAPI app
-app = FastAPI(
-    title="FreshLense API",
-    description="API for web content monitoring platform",
-    version="1.0.0"
-)
-
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# OAuth2 scheme
+# OAuth2 scheme and utilities (doesn't depend on app instance)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-monitoring_scheduler = MonitoringScheduler()
 
-# ✅ Initialize Crawler
+# Instantiate scheduler and crawler BEFORE lifespan so we can use them in startup
+monitoring_scheduler = MonitoringScheduler()
 crawler = ContentFetcher()
 
 # -------------------- Pydantic Models --------------------
@@ -145,16 +139,78 @@ def normalize_doc(doc: dict) -> dict:
         doc["current_version_id"] = str(doc["current_version_id"])
     return doc
 
-# -------------------- Startup/Shutdown --------------------
-@app.on_event("startup")
-async def startup_event():
-    print("🚀 Starting FreshLense API...")
-    await monitoring_scheduler.start()
+def generate_sequential_name(user_id: str) -> str:
+    """Generate sequential names like test1, test2, test3 for extension requests"""
+    page_count = get_user_page_count(user_id)
+    next_number = page_count + 1
+    return f"test{next_number}"
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    print("🛑 Shutting down FreshLense API...")
-    await monitoring_scheduler.shutdown()
+# -------------------- Lifespan (startup/shutdown) --------------------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # STARTUP
+    print("🚀 Starting FreshLense API...")
+    
+    # ✅ ADDED: Verify environment variables are loaded
+    serp_api_key = os.getenv("SERPAPI_API_KEY")
+    if serp_api_key:
+        print(f"✅ SERP API Key loaded: {serp_api_key[:10]}...")
+    else:
+        print("❌ SERP API Key NOT found in environment")
+        print("💡 Make sure you have a .env file with SERPAPI_API_KEY=your_key")
+    
+    # Start monitoring scheduler with proper async handling
+    try:
+        if asyncio.iscoroutinefunction(monitoring_scheduler.start):
+            await monitoring_scheduler.start()
+        else:
+            # run sync start in threadpool to avoid blocking
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, monitoring_scheduler.start)
+    except Exception as e:
+        print(f"Error during monitoring_scheduler.start(): {e}")
+        raise
+
+    # yield to serve requests
+    try:
+        yield
+    finally:
+        # SHUTDOWN
+        print("🛑 Shutting down FreshLense API...")
+        try:
+            if asyncio.iscoroutinefunction(monitoring_scheduler.shutdown):
+                await monitoring_scheduler.shutdown()
+            else:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, monitoring_scheduler.shutdown)
+        except Exception as e:
+            print(f"Error during monitoring_scheduler.shutdown(): {e}")
+
+# -------------------- Create FastAPI app with lifespan --------------------
+app = FastAPI(
+    title="FreshLense API",
+    description="API for web content monitoring platform",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# CORS middleware - UPDATED with Chrome extension support
+origins = [
+    "http://localhost:3000",  # Your React frontend
+    "chrome-extension://*",   # Your Chrome Extension
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# -------------------- Include Routers --------------------
+# ✅ ADDED: Include auth router (no authentication required for these endpoints)
+app.include_router(auth.router)
 
 # -------------------- Auth Routes --------------------
 @app.post("/api/auth/register", response_model=UserResponse)
@@ -181,11 +237,77 @@ async def get_my_pages(current_user: dict = Depends(get_current_user)):
     return [normalize_doc(p) for p in pages]
 
 @app.post("/api/pages", response_model=TrackedPageResponse)
-async def create_page(page: TrackedPageCreate, current_user: dict = Depends(get_current_user)):
-    page_data = {"url": page.url, "display_name": page.display_name, "check_interval_minutes": page.check_interval_minutes}
+async def create_page(
+    page: TrackedPageCreate, 
+    request: Request,  # ✅ ADDED: To check request headers
+    current_user: dict = Depends(get_current_user)
+):
+    # ✅ ADDED: Check if request is from Chrome extension
+    is_extension = request.headers.get("x-request-source") == "chrome-extension"
+    
+    # ✅ Generate sequential name for extension requests without display name
+    if is_extension and (not page.display_name or page.display_name.strip() == ""):
+        display_name = generate_sequential_name(current_user["_id"])
+    else:
+        # For manual additions, use provided name or fallback to URL
+        display_name = page.display_name or page.url
+    
+    page_data = {
+        "url": page.url, 
+        "display_name": display_name,  # ✅ Use generated or provided name
+        "check_interval_minutes": page.check_interval_minutes
+    }
+    
     new_page = create_tracked_page(page_data, current_user["_id"])
-    monitoring_scheduler.schedule_page(new_page)
+    
+    # Schedule page with proper async handling
+    try:
+        if asyncio.iscoroutinefunction(monitoring_scheduler.schedule_page):
+            await monitoring_scheduler.schedule_page(new_page)
+        else:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, monitoring_scheduler.schedule_page, new_page)
+    except Exception as e:
+        print(f"Failed to schedule page immediately after creation: {e}")
+        # Continue anyway - page is created even if scheduling fails
+
     return normalize_doc(new_page)
+
+# ✅ ADDED: DELETE endpoint for tracked pages
+@app.delete("/api/pages/{page_id}")
+async def delete_page(page_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a tracked page"""
+    try:
+        ObjectId(page_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid page ID")
+    
+    # Verify the page belongs to the current user
+    page = get_tracked_page(page_id)
+    if not page or page["user_id"] != current_user["_id"]:
+        raise HTTPException(status_code=404, detail="Page not found")
+    
+    # Delete the page
+    success = delete_tracked_page(page_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete page")
+    
+    return {"status": "success", "message": "Page deleted successfully"}
+
+# ✅ ADDED: New endpoint to check if page is already tracked by URL
+@app.get("/api/pages/by-url", response_model=TrackedPageResponse)
+async def get_page_by_url(
+    url: str = Query(..., description="URL to check"),
+    current_user: dict = Depends(get_current_user)
+):
+    """Check if a page is already tracked by its URL for the current user."""
+    page = get_tracked_page_by_url(url, current_user["_id"])
+    if not page:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Page not found for this user at this URL"
+        )
+    return normalize_doc(page)
 
 @app.get("/api/pages/{page_id}", response_model=TrackedPageResponse)
 async def get_page(page_id: str, current_user: dict = Depends(get_current_user)):
@@ -228,17 +350,17 @@ async def crawl_url(
 ):
     """Trigger a manual crawl for a given URL (no DB save)"""
     try:
-        html_content, text_content = crawler.fetch_and_extract(url)  # ✅ Consistent variable names
+        html_content, text_content = crawler.fetch_and_extract(url)
         if not html_content:
             raise HTTPException(status_code=400, detail="Failed to fetch content from URL")
 
         return {
             "status": "success",
             "url": url,
-            "html_content_length": len(html_content) if html_content else 0,  # ✅ Added HTML info
+            "html_content_length": len(html_content) if html_content else 0,
             "text_content_length": len(text_content) if text_content else 0,
-            "text_content_preview": text_content[:300] if text_content else None,  # ✅ Renamed
-            "full_text_content": text_content  # ✅ Renamed for clarity
+            "text_content_preview": text_content[:300] if text_content else None,
+            "full_text_content": text_content
         }
 
     except Exception as e:
@@ -261,11 +383,11 @@ async def crawl_page_by_id(page_id: str, current_user: dict = Depends(get_curren
         if not html_content:
             raise HTTPException(status_code=400, detail="Failed to fetch content from URL")
 
-        # ✅ Save new version with BOTH HTML and text content
+        # Save new version with BOTH HTML and text content
         new_version = create_page_version(
             page_id=page_id,
-            html_content=html_content,  # ✅ Now passing HTML content
-            text_content=text_content,  # ✅ Keep text content
+            html_content=html_content,
+            text_content=text_content,
             url=page["url"]
         )
         
@@ -277,7 +399,7 @@ async def crawl_page_by_id(page_id: str, current_user: dict = Depends(get_curren
             "current_version_id": str(new_version["_id"])
         }
 
-        # ✅ Compare with last version
+        # Compare with last version
         versions = get_page_versions(page_id)
         if len(versions) > 1 and versions[-2]["text_content"] != text_content:
             update_data["last_change_detected"] = datetime.utcnow()

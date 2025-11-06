@@ -34,17 +34,39 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
+  const [token, setToken] = useState<string | null>(null); // ✅ Start as null, not from localStorage
 
   useEffect(() => {
-    if (token) {
-      const userData = localStorage.getItem('user');
-      if (userData) {
-        setUser(JSON.parse(userData));
+    const initializeAuth = async () => {
+      const storedToken = localStorage.getItem('token');
+      const storedUser = localStorage.getItem('user');
+      
+      if (storedToken && storedUser) {
+        try {
+          // ✅ Set the token and user from storage
+          setToken(storedToken);
+          setUser(JSON.parse(storedUser));
+        } catch (error) {
+          console.error('Failed to parse stored user data:', error);
+          // ✅ Clear invalid storage data
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          setToken(null);
+          setUser(null);
+        }
+      } else {
+        // ✅ Clear any partial/invalid storage
+        if (storedToken) localStorage.removeItem('token');
+        if (storedUser) localStorage.removeItem('user');
+        setToken(null);
+        setUser(null);
       }
-    }
-    setLoading(false);
-  }, [token]);
+      
+      setLoading(false);
+    };
+
+    initializeAuth();
+  }, []); // ✅ Empty dependency array - runs once on mount
 
   // ✅ Updated login function to use "username" field
   const login = async (email: string, password: string) => {
@@ -99,7 +121,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     register,
     logout,
     loading,
-    isAuthenticated: !!token,
+    isAuthenticated: !!token && !!user, // ✅ More strict check - require both token AND user
   };
 
   return (

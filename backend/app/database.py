@@ -24,6 +24,7 @@ try:
     pages_collection = db['tracked_pages']
     versions_collection = db['page_versions']
     changes_collection = db['change_logs']
+    password_reset_tokens_collection = db['password_reset_tokens']  # ✅ ADDED: New collection
 
     # Indexes
     def create_indexes():
@@ -33,6 +34,12 @@ try:
         versions_collection.create_index([("page_id", ASCENDING), ("timestamp", DESCENDING)])
         changes_collection.create_index([("user_id", ASCENDING), ("timestamp", DESCENDING)])
         changes_collection.create_index([("page_id", ASCENDING), ("timestamp", DESCENDING)])
+        
+        # ✅ ADDED: Indexes for password reset tokens
+        password_reset_tokens_collection.create_index([("token", ASCENDING)], unique=True)
+        password_reset_tokens_collection.create_index([("user_id", ASCENDING)])
+        password_reset_tokens_collection.create_index([("expires_at", ASCENDING)], expireAfterSeconds=0)  # TTL index
+        
         print("✅ Database indexes created successfully!")
 
     create_indexes()
@@ -98,6 +105,107 @@ def create_user(user_data: dict):
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify password against hash"""
     return pwd_context.verify(plain_password, hashed_password)
+
+
+# ---------------- Password Reset Token Operations ----------------
+def create_password_reset_token(token: str, user_id: ObjectId, expires_at: datetime) -> bool:
+    """Create a new password reset token"""
+    if db is None:
+        return False
+    
+    # Handle both ObjectId and string user_id
+    if isinstance(user_id, str):
+        try:
+            user_id = ObjectId(user_id)
+        except:
+            return False
+    
+    token_doc = {
+        "token": token,
+        "user_id": user_id,
+        "created_at": datetime.utcnow(),
+        "expires_at": expires_at,
+        "used": False,
+        "used_at": None
+    }
+    
+    try:
+        result = password_reset_tokens_collection.insert_one(token_doc)
+        return result.inserted_id is not None
+    except DuplicateKeyError:
+        # Token already exists (should be very rare with secure tokens)
+        return False
+    except Exception as e:
+        print(f"Error creating password reset token: {e}")
+        return False
+
+
+def get_valid_password_reset_token(token: str):
+    """Get a valid, unused password reset token"""
+    if db is None:
+        return None
+    
+    try:
+        token_record = password_reset_tokens_collection.find_one({
+            "token": token,
+            "used": False,
+            "expires_at": {"$gt": datetime.utcnow()}  # Not expired
+        })
+        return token_record  # Return raw doc
+    except Exception as e:
+        print(f"Error getting password reset token: {e}")
+        return None
+
+
+def mark_password_reset_token_used(token: str) -> bool:
+    """Mark a password reset token as used"""
+    if db is None:
+        return False
+    
+    try:
+        result = password_reset_tokens_collection.update_one(
+            {"token": token},
+            {
+                "$set": {
+                    "used": True,
+                    "used_at": datetime.utcnow()
+                }
+            }
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        print(f"Error marking password reset token as used: {e}")
+        return False
+
+
+def update_user_password(user_id: ObjectId, new_password: str) -> bool:
+    """Update a user's password"""
+    if db is None:
+        return False
+    
+    # Handle both ObjectId and string user_id
+    if isinstance(user_id, str):
+        try:
+            user_id = ObjectId(user_id)
+        except:
+            return False
+    
+    hashed_password = pwd_context.hash(new_password)
+    
+    try:
+        result = users_collection.update_one(
+            {"_id": user_id},
+            {
+                "$set": {
+                    "hashed_password": hashed_password,
+                    "updated_at": datetime.utcnow()  # Optional: track password updates
+                }
+            }
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        print(f"Error updating user password: {e}")
+        return False
 
 
 # ---------------- Tracked Pages ----------------
@@ -182,6 +290,45 @@ def delete_tracked_page(page_id: str) -> bool:
         return result.deleted_count > 0
     except:
         return False
+
+
+def get_tracked_page_by_url(url: str, user_id):
+    """Find a tracked page by its URL for a specific user."""
+    if db is None:
+        return None
+
+    # Handle both ObjectId and string user_id
+    if isinstance(user_id, str):
+        try:
+            user_id = ObjectId(user_id)
+        except:
+            return None  # Invalid string ID
+
+    try:
+        # Return raw doc for main.py normalize_doc
+        return pages_collection.find_one({"url": url, "user_id": user_id})
+    except Exception as e:
+        print(f"Error finding page by URL: {e}")
+        return None
+
+
+# --- ✅ ADDED: get_user_page_count function ---
+def get_user_page_count(user_id: str) -> int:
+    """Count how many pages a user currently has"""
+    if db is None:
+        return 0
+    
+    try:
+        # Handle both ObjectId and string user_id
+        if isinstance(user_id, str):
+            user_id = ObjectId(user_id)
+        
+        count = pages_collection.count_documents({"user_id": user_id})
+        return count
+    except Exception as e:
+        print(f"Error counting user pages: {e}")
+        return 0
+# --- END OF ADDED FUNCTION ---
 
 
 # ---------------- Page Versions ----------------

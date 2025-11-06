@@ -27,13 +27,13 @@ import {
 import { useNavigate } from "react-router-dom";
 import { TrackedPage } from "../../services/api";
 
-// ✅ Updated props to match Dashboard
 interface PageListProps {
   pages: TrackedPage[];
   onPageDeleted: (pageId: string) => void;
   onPageUpdated: (updatedPage: TrackedPage) => void;
   onPageCrawl: (pageId: string) => Promise<void>;
-  crawlingPages: Set<string>; // ✅ New prop for loading states
+  crawlingPages: Set<string>;
+  deletingPages?: Set<string>;
 }
 
 const PageList: React.FC<PageListProps> = ({
@@ -42,13 +42,18 @@ const PageList: React.FC<PageListProps> = ({
   onPageUpdated,
   onPageCrawl,
   crawlingPages,
+  deletingPages = new Set(),
 }) => {
   const navigate = useNavigate();
 
-  // ✅ Utility functions for formatting and status
   const formatDate = (dateString: string | null): string => {
     if (!dateString) return 'Never';
-    return new Date(dateString).toLocaleString();
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
   };
 
   const formatTimeAgo = (dateString: string | null): string => {
@@ -110,14 +115,8 @@ const PageList: React.FC<PageListProps> = ({
     );
   };
 
-  const truncateUrl = (url: string, maxLength: number = 50): string => {
-    if (url.length <= maxLength) return url;
-    return url.substring(0, maxLength) + '...';
-  };
-
   // Check if a page has versions available for fact checking
   const hasVersionsForFactCheck = (page: TrackedPage): boolean => {
-    // Pages with current_version_id have at least one version
     return !!page.current_version_id;
   };
 
@@ -135,16 +134,27 @@ const PageList: React.FC<PageListProps> = ({
   }
 
   return (
-    <TableContainer component={Paper} elevation={2}>
-      <Table>
+    <TableContainer 
+      component={Paper} 
+      elevation={2}
+      sx={{ 
+        maxWidth: '100%',
+        overflow: 'auto'
+      }}
+    >
+      <Table sx={{ 
+        tableLayout: 'fixed',
+        minWidth: 1000 // Ensures proper minimum width
+      }}>
         <TableHead>
           <TableRow>
-            <TableCell><strong>URL</strong></TableCell>
-            <TableCell><strong>Display Name</strong></TableCell>
-            <TableCell><strong>Status</strong></TableCell>
-            <TableCell><strong>Last Checked</strong></TableCell>
-            <TableCell><strong>Interval</strong></TableCell>
-            <TableCell align="right"><strong>Actions</strong></TableCell>
+            {/* ✅ Optimized column distribution */}
+            <TableCell sx={{ width: '35%', minWidth: 250 }}><strong>URL</strong></TableCell>
+            <TableCell sx={{ width: '15%', minWidth: 120 }}><strong>Display Name</strong></TableCell>
+            <TableCell sx={{ width: '12%', minWidth: 100 }}><strong>Status</strong></TableCell>
+            <TableCell sx={{ width: '15%', minWidth: 140 }}><strong>Last Checked</strong></TableCell>
+            <TableCell sx={{ width: '8%', minWidth: 80 }}><strong>Interval</strong></TableCell>
+            <TableCell align="right" sx={{ width: '15%', minWidth: 180 }}><strong>Actions</strong></TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -158,8 +168,16 @@ const PageList: React.FC<PageListProps> = ({
                 opacity: page.is_active ? 1 : 0.6,
               }}
             >
-              {/* URL Column */}
-              <TableCell>
+              {/* ✅ URL Column - More space for long URLs */}
+              <TableCell 
+                sx={{ 
+                  width: '35%',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  py: 2
+                }}
+              >
                 <Tooltip title={page.url}>
                   <Typography 
                     variant="body2" 
@@ -173,41 +191,64 @@ const PageList: React.FC<PageListProps> = ({
                       '&:hover': {
                         textDecoration: 'underline',
                       },
+                      display: 'block',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
                     }}
                   >
-                    {truncateUrl(page.url)}
+                    {page.url}
                   </Typography>
                 </Tooltip>
               </TableCell>
 
-              {/* Display Name Column */}
-              <TableCell>
-                <Typography variant="body2">
-                  {page.display_name || truncateUrl(page.url, 30)}
+              {/* ✅ Display Name Column */}
+              <TableCell sx={{ width: '15%', py: 2 }}>
+                <Typography 
+                  variant="body2"
+                  sx={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {page.display_name || 'Untitled'}
                 </Typography>
               </TableCell>
 
-              {/* Status Column */}
-              <TableCell>
+              {/* ✅ Status Column */}
+              <TableCell sx={{ width: '12%', py: 2 }}>
                 {getStatusChip(page)}
               </TableCell>
 
-              {/* Last Checked Column */}
-              <TableCell>
+              {/* ✅ Last Checked Column */}
+              <TableCell sx={{ width: '15%', py: 2 }}>
                 <Box>
-                  <Typography variant="body2">
+                  <Typography 
+                    variant="body2"
+                    sx={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      fontSize: '0.875rem'
+                    }}
+                  >
                     {formatDate(page.last_checked)}
                   </Typography>
                   {page.last_checked && (
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography 
+                      variant="caption" 
+                      color="text.secondary"
+                      sx={{ display: 'block', mt: 0.5 }}
+                    >
                       {formatTimeAgo(page.last_checked)}
                     </Typography>
                   )}
                 </Box>
               </TableCell>
 
-              {/* Interval Column */}
-              <TableCell>
+              {/* ✅ Interval Column */}
+              <TableCell sx={{ width: '8%', py: 2 }}>
                 <Typography variant="body2">
                   {page.check_interval_minutes < 60
                     ? `${page.check_interval_minutes}m`
@@ -218,92 +259,80 @@ const PageList: React.FC<PageListProps> = ({
                 </Typography>
               </TableCell>
 
-              {/* Actions Column */}
-              <TableCell align="right">
-                {/* ✅ Enhanced Crawl Button with loading state */}
-                <Tooltip title="Check for changes now">
-                  <span>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      onClick={() => onPageCrawl(page.id)}
-                      disabled={crawlingPages.has(page.id) || !page.is_active}
-                      startIcon={
-                        crawlingPages.has(page.id) ? (
-                          <CircularProgress size={16} />
-                        ) : (
-                          <RefreshIcon />
-                        )
-                      }
-                      sx={{ mr: 1, minWidth: '110px' }}
-                    >
-                      {crawlingPages.has(page.id) ? 'Checking...' : 'Check Now'}
-                    </Button>
-                  </span>
-                </Tooltip>
-
-                {/* ✅ Fact Check Button */}
-                <Tooltip 
-                  title={
-                    hasVersionsForFactCheck(page) 
-                      ? "Analyze content with fact checking" 
-                      : "Check the page first to enable fact checking"
-                  }
-                >
-                  <span>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      onClick={() => navigate(`/fact-check/${page.id}`)}
-                      disabled={!hasVersionsForFactCheck(page)}
-                      startIcon={<FactCheckIcon />}
-                      sx={{ 
-                        mr: 1,
-                        minWidth: '100px',
-                        borderColor: hasVersionsForFactCheck(page) ? 'primary.main' : 'grey.400',
-                        color: hasVersionsForFactCheck(page) ? 'primary.main' : 'grey.400',
-                        '&:hover': {
-                          borderColor: hasVersionsForFactCheck(page) ? 'primary.dark' : 'grey.400',
-                          backgroundColor: hasVersionsForFactCheck(page) ? 'primary.50' : 'transparent',
+              {/* ✅ Actions Column - Compact layout */}
+              <TableCell align="right" sx={{ width: '15%', py: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, flexWrap: 'wrap' }}>
+                  {/* Check Now Button */}
+                  <Tooltip title="Check for changes now">
+                    <span>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => onPageCrawl(page.id)}
+                        disabled={crawlingPages.has(page.id) || !page.is_active}
+                        startIcon={
+                          crawlingPages.has(page.id) ? (
+                            <CircularProgress size={16} />
+                          ) : (
+                            <RefreshIcon />
+                          )
                         }
-                      }}
-                    >
-                      Fact Check
-                    </Button>
-                  </span>
-                </Tooltip>
+                        sx={{ minWidth: 'auto', px: 1 }}
+                      >
+                        {crawlingPages.has(page.id) ? '...' : 'Check'}
+                      </Button>
+                    </span>
+                  </Tooltip>
 
-                {/* Edit Button - placeholder for future functionality */}
-                <Tooltip title="Edit page settings (coming soon)">
-                  <span>
-                    <IconButton
-                      color="primary"
-                      onClick={() => {
-                        // TODO: Implement edit functionality
-                        console.log('Edit page:', page.id);
-                      }}
-                      disabled
-                      size="small"
-                    >
-                      <EditIcon />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-
-                {/* Delete Button */}
-                <Tooltip title="Delete this page">
-                  <IconButton
-                    color="error"
-                    onClick={() => {
-                      if (window.confirm(`Are you sure you want to delete monitoring for "${page.display_name || page.url}"?`)) {
-                        onPageDeleted(page.id);
-                      }
-                    }}
-                    size="small"
+                  {/* Fact Check Button */}
+                  <Tooltip 
+                    title={
+                      hasVersionsForFactCheck(page) 
+                        ? "Analyze content with fact checking" 
+                        : "Check the page first to enable fact checking"
+                    }
                   >
-                    <DeleteIcon />
-                  </IconButton>
-                </Tooltip>
+                    <span>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => navigate(`/fact-check/${page.id}`)}
+                        disabled={!hasVersionsForFactCheck(page)}
+                        startIcon={<FactCheckIcon />}
+                        sx={{ 
+                          minWidth: 'auto',
+                          px: 1,
+                          borderColor: hasVersionsForFactCheck(page) ? 'primary.main' : 'grey.400',
+                          color: hasVersionsForFactCheck(page) ? 'primary.main' : 'grey.400',
+                        }}
+                      >
+                        Fact Check
+                      </Button>
+                    </span>
+                  </Tooltip>
+
+                  {/* Delete Button */}
+                  <Tooltip title="Delete this page">
+                    <span>
+                      <IconButton
+                        color="error"
+                        size="small"
+                        onClick={() => {
+                          if (window.confirm(`Are you sure you want to delete monitoring for "${page.display_name || page.url}"?`)) {
+                            onPageDeleted(page.id);
+                          }
+                        }}
+                        disabled={deletingPages.has(page.id)}
+                      >
+                        {deletingPages.has(page.id) ? (
+                          <CircularProgress size={20} />
+                        ) : (
+                          <DeleteIcon />
+                        )}
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                </Box>
               </TableCell>
             </TableRow>
           ))}

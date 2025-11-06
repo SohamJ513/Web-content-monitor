@@ -115,7 +115,7 @@ class ContentFetcher:
                             return cleaned_text
             
             # Fallback: Extract from meaningful paragraphs and divs
-            meaningful_elements = soup.find_all(['p', 'div', 'section', 'li'])
+            meaningful_elements = soup.find_all(['p', 'div', 'section', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
             meaningful_text = []
             
             for elem in meaningful_elements:
@@ -151,33 +151,51 @@ class ContentFetcher:
             return ""
 
     def is_meaningful_text(self, text: str) -> bool:
-        """Check if text is meaningful (not navigation, ads, etc.)"""
-        if len(text) < 30:
+        """Check if text is meaningful (not navigation, ads, etc.) - MORE LENIENT FOR DOCS"""
+        # 🚨 CRITICAL FIX: Reduced thresholds for technical documentation
+        if len(text) < 15:  # Reduced from 30 to 15
             return False
         
         word_count = len(text.split())
-        if word_count < 5:
+        if word_count < 3:   # Reduced from 5 to 3 (technical docs have short factual sentences)
             return False
         
         # Skip common non-content patterns
         skip_patterns = [
             r'^\s*\d+\s*$',  # Just numbers
-            r'^[A-Z\s]{3,}$',  # All caps (likely navigation)
-            r'^(Home|About|Contact|Menu|Login|Sign up|Subscribe)(\s|$)',
-            r'Cookie|Privacy Policy|Terms of Service',
+            r'^[A-Z\s]{10,}$',  # All caps (likely navigation) - made more strict
+            r'^(Home|About|Contact|Menu|Login|Sign up|Subscribe|Search)(\s|$)',
+            r'Cookie|Privacy Policy|Terms of Service|All rights reserved',
             r'^\d+\s+of\s+\d+$',  # Pagination
             r'^Page\s+\d+$',
-            r'©|Copyright|All rights reserved',
+            r'^©\s*\d{4}',
+            r'^Back to top$',
+            r'^Skip to main content$',
         ]
         
         for pattern in skip_patterns:
             if re.search(pattern, text, re.IGNORECASE):
                 return False
         
+        # 🚨 NEW: Explicitly allow technical content patterns
+        technical_patterns = [
+            r'\b(python|javascript|java|react|node|django|mongodb|docker|kubernetes)\b',
+            r'\b\d+\.\d+(\.\d+)?\b',  # Version numbers
+            r'\b\d+%\b',  # Percentages
+            r'\b\d+x\b',  # Multipliers
+            r'\b(faster|slower|better|performance|compatible|supports|requires)\b',
+            r'\b(memory|cpu|storage|latency|throughput|index|query)\b',
+        ]
+        
+        # If it matches technical patterns, be more lenient
+        if any(re.search(pattern, text, re.IGNORECASE) for pattern in technical_patterns):
+            print(f"🔧 DEBUG: Allowing technical content: '{text}'")
+            return True
+        
         return True
 
     def clean_text(self, text: str) -> str:
-        """Clean extracted text by removing noise and formatting"""
+        """Clean extracted text by removing noise and formatting - MORE LENIENT"""
         if not text:
             return ""
         
@@ -191,15 +209,15 @@ class ContentFetcher:
             if not line:
                 continue
             
-            # Skip very short lines
-            if len(line) < 20:
+            # 🚨 CRITICAL FIX: Reduced minimum line length for technical docs
+            if len(line) < 10:  # Reduced from 20 to 10
                 continue
             
             # Skip duplicate lines
             if line in seen_lines:
                 continue
             
-            # Check if line is meaningful
+            # Check if line is meaningful (with new lenient rules)
             if self.is_meaningful_text(line):
                 lines.append(line)
                 seen_lines.add(line)
@@ -208,6 +226,10 @@ class ContentFetcher:
         result = '\n'.join(lines)
         result = re.sub(r'\n{3,}', '\n\n', result)  # Max 2 consecutive newlines
         result = re.sub(r' {2,}', ' ', result)  # Remove extra spaces
+        
+        print(f"📝 DEBUG: Cleaned text length: {len(result)} characters")
+        if result:
+            print(f"📝 DEBUG: First 200 chars: {result[:200]}...")
         
         return result.strip()
 

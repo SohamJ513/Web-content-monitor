@@ -38,6 +38,53 @@ const FactCheckResult: React.FC<FactCheckResultProps> = ({ result }) => {
     }
   };
 
+  const renderSourceLink = (source: string, index: number) => {
+    // Check if source is in "Title (URL)" format
+    const match = source.match(/^(.*?)\s*\((https?:\/\/[^)]+)\)$/);
+    
+    if (match) {
+      const title = match[1].trim();
+      const url = match[2];
+      return (
+        <div key={index} className="flex items-start text-sm mb-1">
+          <span className="text-blue-600 mr-2 mt-0.5">•</span>
+          <a 
+            href={url} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:text-blue-800 hover:underline wrap-break-word"
+          >
+            {title}
+          </a>
+        </div>
+      );
+    } else {
+      // If not in expected format, just display as text with potential link
+      const urlMatch = source.match(/(https?:\/\/[^\s]+)/);
+      if (urlMatch) {
+        return (
+          <div key={index} className="flex items-start text-sm mb-1">
+            <span className="text-blue-600 mr-2 mt-0.5">•</span>
+            <a 
+              href={urlMatch[1]} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 hover:underline wrap-break-word"
+            >
+              {source}
+            </a>
+          </div>
+        );
+      }
+      return (
+        <div key={index} className="flex items-start text-sm mb-1">
+          <span className="text-gray-600 mr-2 mt-0.5">•</span>
+          <span className="text-gray-700 wrap-break-word">{source}</span>
+        </div>
+      );
+    }
+  };
+
   return (
     <div className="border rounded-lg p-4 mb-4 bg-white shadow-sm">
       <div className="flex justify-between items-start mb-3">
@@ -58,14 +105,24 @@ const FactCheckResult: React.FC<FactCheckResultProps> = ({ result }) => {
         </div>
       )}
       
-      <div className="flex justify-between items-center text-sm">
+      <div className="flex justify-between items-center text-sm mb-3">
         <span className="text-gray-600">
           Confidence: <strong>{(result.confidence * 100).toFixed(1)}%</strong>
         </span>
         <span className="text-gray-600 text-xs">
-          {result.sources.length} sources
+          {result.sources.length} source{result.sources.length !== 1 ? 's' : ''}
         </span>
       </div>
+      
+      {/* Sources Section */}
+      {result.sources && result.sources.length > 0 && (
+        <div className="mb-3 p-3 bg-gray-50 rounded border border-gray-200">
+          <p className="text-sm font-medium text-gray-700 mb-2">Verification Sources:</p>
+          <div className="space-y-1">
+            {result.sources.map((source, index) => renderSourceLink(source, index))}
+          </div>
+        </div>
+      )}
       
       {result.explanation && (
         <div className="mt-3 p-3 bg-blue-50 rounded border border-blue-200">

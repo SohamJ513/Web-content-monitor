@@ -16,12 +16,14 @@ import {
 import { Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { Login as LoginIcon } from '@mui/icons-material';
+import ForgotPassword from './ForgotPassword'; // ✅ Import ForgotPassword component
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false); // ✅ New state for forgot password
   
   const { login } = useAuth();
   const theme = useTheme();
@@ -60,6 +62,16 @@ const Login: React.FC = () => {
     
     setLoading(false);
   };
+
+  // ✅ Show Forgot Password component if needed
+  if (showForgotPassword) {
+    return (
+      <ForgotPassword 
+        onBackToLogin={() => setShowForgotPassword(false)}
+        onSuccess={() => setShowForgotPassword(false)}
+      />
+    );
+  }
 
   return (
     <Container maxWidth="sm">
@@ -179,7 +191,7 @@ const Login: React.FC = () => {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 sx={{
-                  mb: 3,
+                  mb: 1, // ✅ Reduced margin to make space for forgot password link
                   '& .MuiOutlinedInput-root': {
                     borderRadius: 2,
                     '&:hover fieldset': {
@@ -188,6 +200,27 @@ const Login: React.FC = () => {
                   },
                 }}
               />
+
+              {/* ✅ Forgot Password Link */}
+              <Box sx={{ textAlign: 'right', mb: 2 }}>
+                <Link 
+                  component="button" 
+                  type="button"
+                  variant="body2" 
+                  onClick={() => setShowForgotPassword(true)}
+                  sx={{
+                    color: theme.palette.primary.main,
+                    textDecoration: 'none',
+                    fontWeight: 500,
+                    '&:hover': {
+                      textDecoration: 'underline',
+                    },
+                  }}
+                >
+                  Forgot your password?
+                </Link>
+              </Box>
+
               <Button
                 type="submit"
                 fullWidth
