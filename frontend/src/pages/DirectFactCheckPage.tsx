@@ -13,7 +13,9 @@ import {
   CircularProgress,
   IconButton,
   Tooltip,
-  Divider
+  Divider,
+  FormControlLabel,
+  Switch
 } from '@mui/material';
 import {
   ContentPaste,
@@ -22,7 +24,8 @@ import {
   HelpOutline,
   Article,
   Link as LinkIcon,
-  Title
+  Title,
+  MailOutline  // ✅ ADD THIS IMPORT
 } from '@mui/icons-material';
 import { factCheckApi } from '../services/factCheckApi';
 import { FactCheckResponse, DirectFactCheckRequest } from '../types/factCheck';
@@ -32,9 +35,12 @@ const DirectFactCheckPage: React.FC = () => {
   const [content, setContent] = useState('');
   const [pageUrl, setPageUrl] = useState('');
   const [pageTitle, setPageTitle] = useState('');
+  const [userEmail, setUserEmail] = useState(''); // ✅ ADD THIS STATE
+  const [sendEmail, setSendEmail] = useState(true); // ✅ ADD THIS STATE
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<FactCheckResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [emailSuccess, setEmailSuccess] = useState(false); // ✅ ADD THIS STATE
 
   const handleFactCheck = async () => {
     if (!content.trim()) {
@@ -44,16 +50,23 @@ const DirectFactCheckPage: React.FC = () => {
 
     setIsLoading(true);
     setError(null);
+    setEmailSuccess(false); // Reset email success
     
     try {
       const request: DirectFactCheckRequest = {
         content: content,
         page_url: pageUrl || 'Direct input',
         page_title: pageTitle || 'User provided content',
+        user_email: sendEmail ? userEmail : undefined, // ✅ ADD EMAIL TO REQUEST
       };
 
       const data = await factCheckApi.checkDirectContent(request);
       setResult(data);
+      
+      // Show success message if email was requested
+      if (sendEmail && userEmail) {
+        setEmailSuccess(true);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Fact checking failed');
     } finally {
@@ -65,8 +78,10 @@ const DirectFactCheckPage: React.FC = () => {
     setContent('');
     setPageUrl('');
     setPageTitle('');
+    setUserEmail(''); // ✅ CLEAR EMAIL TOO
     setResult(null);
     setError(null);
+    setEmailSuccess(false);
   };
 
   const sampleTechnicalContent = `Python 3.6 offers 50% better performance than Python 2.7 and requires only 1GB of RAM. 
@@ -78,6 +93,7 @@ Django 2.2 is fully supported and recommended for all production applications.`;
     setContent(sampleTechnicalContent);
     setPageTitle('Sample Technical Content');
     setPageUrl('https://example.com/sample');
+    setUserEmail(''); // Reset email for sample
   };
 
   const pasteFromClipboard = async () => {
@@ -155,6 +171,58 @@ Django 2.2 is fully supported and recommended for all production applications.`;
                   }}
                 />
               </Box>
+            </Box>
+
+            {/* ✅ ADD EMAIL SECTION HERE */}
+            <Box sx={{ mb: 3 }}>
+              <Typography 
+                variant="h6" 
+                gutterBottom 
+                sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
+              >
+                <MailOutline color="primary" />
+                Email Results
+              </Typography>
+              
+              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={sendEmail}
+                      onChange={(e) => setSendEmail(e.target.checked)}
+                      color="primary"
+                      size="medium"
+                    />
+                  }
+                  label={
+                    <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
+                      Send results to email
+                    </Typography>
+                  }
+                />
+              </Box>
+              
+              {sendEmail && (
+                <TextField
+                  fullWidth
+                  label="Your Email Address"
+                  type="email"
+                  value={userEmail}
+                  onChange={(e) => setUserEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  helperText="We'll send detailed fact-check results to this email"
+                  disabled={isLoading}
+                  InputProps={{
+                    startAdornment: <MailOutline sx={{ color: 'text.secondary', mr: 1 }} />
+                  }}
+                />
+              )}
+              
+              {sendEmail && userEmail && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1, ml: 1 }}>
+                  📧 Results will be sent to: <strong>{userEmail}</strong>
+                </Typography>
+              )}
             </Box>
 
             {/* Content Textarea */}
@@ -246,9 +314,24 @@ Django 2.2 is fully supported and recommended for all production applications.`;
               </Button>
             </Box>
 
+            {/* Success & Error Messages */}
+            {emailSuccess && (
+              <Alert severity="success" sx={{ mt: 2 }}>
+                ✅ Fact-check complete! Results have been sent to <strong>{userEmail}</strong>.
+                Check your inbox for detailed analysis.
+              </Alert>
+            )}
+            
             {error && (
               <Alert severity="error" sx={{ mt: 2 }}>
                 {error}
+              </Alert>
+            )}
+            
+            {/* Email Tips */}
+            {sendEmail && !userEmail && (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                💡 Enter your email above to receive detailed fact-check results via email.
               </Alert>
             )}
           </Paper>
@@ -257,7 +340,53 @@ Django 2.2 is fully supported and recommended for all production applications.`;
         {/* Results & Help Section */}
         <Box sx={{ flex: 1, minWidth: { md: 350 } }}>
           {result ? (
-            <FactCheckResults data={result} />
+            <Box>
+              <FactCheckResults data={result} />
+              
+              {/* Email Success Card */}
+              {emailSuccess && (
+                <Card 
+                  elevation={2} 
+                  sx={{ 
+                    mt: 3, 
+                    background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
+                    border: '1px solid #93c5fd'
+                  }}
+                >
+                  <CardContent>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                      <MailOutline color="primary" sx={{ mr: 1 }} />
+                      <Typography variant="h6" component="h2" color="primary">
+                        Email Sent Successfully!
+                      </Typography>
+                    </Box>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      Detailed fact-check results have been sent to:
+                    </Typography>
+                    <Chip 
+                      label={userEmail} 
+                      color="primary" 
+                      variant="outlined"
+                      sx={{ mb: 2, fontWeight: 'medium' }}
+                    />
+                    <Typography variant="body2" color="text.secondary">
+                      Check your inbox (and spam folder) for the complete analysis with:
+                    </Typography>
+                    <Box component="ul" sx={{ pl: 2, mt: 1 }}>
+                      <Typography variant="body2" component="li" color="text.secondary">
+                        Credibility score
+                      </Typography>
+                      <Typography variant="body2" component="li" color="text.secondary">
+                        Claim-by-claim breakdown
+                      </Typography>
+                      <Typography variant="body2" component="li" color="text.secondary">
+                        Detailed verification sources
+                      </Typography>
+                    </Box>
+                  </CardContent>
+                </Card>
+              )}
+            </Box>
           ) : (
             <Card 
               elevation={2} 
@@ -291,6 +420,28 @@ Django 2.2 is fully supported and recommended for all production applications.`;
                       </Typography>
                       <Typography variant="body2" component="li" color="text.secondary">
                         API specifications
+                      </Typography>
+                    </Box>
+                  </Box>
+
+                  <Divider />
+
+                  <Box>
+                    <Typography variant="subtitle2" color="primary" gutterBottom>
+                      📧 Email Results Feature
+                    </Typography>
+                    <Box component="ul" sx={{ pl: 2 }}>
+                      <Typography variant="body2" component="li" color="text.secondary">
+                        Get detailed results in your inbox
+                      </Typography>
+                      <Typography variant="body2" component="li" color="text.secondary">
+                        Includes credibility score and breakdown
+                      </Typography>
+                      <Typography variant="body2" component="li" color="text.secondary">
+                        Perfect for sharing with teams
+                      </Typography>
+                      <Typography variant="body2" component="li" color="text.secondary">
+                        Results saved for future reference
                       </Typography>
                     </Box>
                   </Box>

@@ -33,6 +33,7 @@ export interface DirectFactCheckRequest {
   content: string;
   page_url?: string;
   page_title?: string;
+  user_email?: string; // ✅ ADD THIS FIELD
 }
 
 export interface FactCheckResponse {
@@ -63,4 +64,19 @@ export interface PageVersionsResponse {
     display_name: string;
   };
   versions: PageVersionInfo[];
+}
+
+// ✅ OPTIONAL: You can also add these email-related types
+export interface EmailNotificationSettings {
+  enabled: boolean;
+  email: string;
+  sendImmediateResults: boolean;
+  sendDailyDigest: boolean;
+}
+
+export interface EmailResultConfirmation {
+  emailSent: boolean;
+  recipientEmail: string;
+  sentAt?: string;
+  message?: string;
 }

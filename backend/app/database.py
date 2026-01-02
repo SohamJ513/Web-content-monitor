@@ -80,6 +80,22 @@ def get_user_by_email(email: str):
     return user  # Return raw doc (main.py expects ObjectId format)
 
 
+# ✅ ADDED: CRITICAL FUNCTION FOR SCHEDULER EMAILS
+def get_user_by_id(user_id):
+    """Get user by ID"""
+    if db is None:
+        return None
+    try:
+        # Handle both ObjectId and string user_id
+        if isinstance(user_id, str):
+            user_id = ObjectId(user_id)
+        user = users_collection.find_one({"_id": user_id})
+        return user
+    except Exception as e:
+        print(f"Error getting user by ID: {e}")
+        return None
+
+
 def create_user(user_data: dict):
     """Create a new user with hashed password"""
     if db is None:
@@ -332,7 +348,8 @@ def get_user_page_count(user_id: str) -> int:
 
 
 # ---------------- Page Versions ----------------
-def create_page_version(page_id: str, html_content: str, text_content: str, url: str):
+# ✅ UPDATED: Made html_content optional to match scheduler usage
+def create_page_version(page_id: str, text_content: str, url: str, html_content: str = None):
     """Create a new page version with both HTML and text content"""
     if db is None:
         return None
@@ -340,8 +357,8 @@ def create_page_version(page_id: str, html_content: str, text_content: str, url:
     version = {
         "page_id": ObjectId(page_id),
         "timestamp": datetime.utcnow(),
-        "html_content": html_content,  # ✅ Now saving HTML content
         "text_content": text_content,
+        "html_content": html_content,  # Now optional
         "metadata": {
             "url": url,
             "content_length": len(text_content),

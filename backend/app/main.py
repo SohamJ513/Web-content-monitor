@@ -46,6 +46,26 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# -------------------- Email Configuration Check --------------------
+def check_email_configuration():
+    """Check and log email configuration status"""
+    email_enabled = os.getenv("EMAIL_ENABLED", "true").lower() == "true"
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    resend_from_email = os.getenv("RESEND_FROM_EMAIL")
+    
+    if email_enabled:
+        if resend_api_key:
+            print("✅ Email notifications: ENABLED with Resend")
+            print(f"   From email: {resend_from_email or 'onboarding@resend.dev'}")
+            return True
+        else:
+            print("❌ EMAIL_ENABLED=true but RESEND_API_KEY missing!")
+            print("   Add RESEND_API_KEY to your .env file")
+            return False
+    else:
+        print("ℹ️  Email notifications: DISABLED (EMAIL_ENABLED=false)")
+        return False
+
 # Instantiate scheduler and crawler BEFORE lifespan so we can use them in startup
 monitoring_scheduler = MonitoringScheduler()
 crawler = ContentFetcher()
@@ -149,9 +169,11 @@ def generate_sequential_name(user_id: str) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # STARTUP
+    print("=" * 60)
     print("🚀 Starting FreshLense API...")
+    print("=" * 60)
     
-    # ✅ ADDED: Verify environment variables are loaded
+    # ✅ CHECK SERP API CONFIGURATION
     serp_api_key = os.getenv("SERPAPI_API_KEY")
     if serp_api_key:
         print(f"✅ SERP API Key loaded: {serp_api_key[:10]}...")
@@ -159,23 +181,47 @@ async def lifespan(app: FastAPI):
         print("❌ SERP API Key NOT found in environment")
         print("💡 Make sure you have a .env file with SERPAPI_API_KEY=your_key")
     
+    # ✅ CHECK EMAIL CONFIGURATION
+    email_configured = check_email_configuration()
+    
+    # ✅ CHECK DATABASE CONNECTION
+    from .database import is_db_available
+    if is_db_available():
+        print("✅ Database connection: ACTIVE")
+    else:
+        print("❌ Database connection: FAILED")
+    
     # Start monitoring scheduler with proper async handling
     try:
+        print("\n🔄 Starting monitoring scheduler...")
         if asyncio.iscoroutinefunction(monitoring_scheduler.start):
             await monitoring_scheduler.start()
         else:
             # run sync start in threadpool to avoid blocking
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, monitoring_scheduler.start)
+        print("✅ Monitoring scheduler started successfully")
+        
+        # Log scheduler email status
+        if hasattr(monitoring_scheduler, 'email_enabled'):
+            if monitoring_scheduler.email_enabled:
+                print("✅ Scheduler email notifications: ENABLED")
+            else:
+                print("❌ Scheduler email notifications: DISABLED")
     except Exception as e:
-        print(f"Error during monitoring_scheduler.start(): {e}")
+        print(f"❌ Error starting monitoring scheduler: {e}")
         raise
 
+    print("\n" + "=" * 60)
+    print("✅ FreshLense API is ready!")
+    print("=" * 60)
+    
     # yield to serve requests
     try:
         yield
     finally:
         # SHUTDOWN
+        print("\n" + "=" * 60)
         print("🛑 Shutting down FreshLense API...")
         try:
             if asyncio.iscoroutinefunction(monitoring_scheduler.shutdown):
@@ -183,8 +229,10 @@ async def lifespan(app: FastAPI):
             else:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, monitoring_scheduler.shutdown)
+            print("✅ Monitoring scheduler stopped")
         except Exception as e:
-            print(f"Error during monitoring_scheduler.shutdown(): {e}")
+            print(f"❌ Error during monitoring_scheduler.shutdown(): {e}")
+        print("=" * 60)
 
 # -------------------- Create FastAPI app with lifespan --------------------
 app = FastAPI(
@@ -424,11 +472,124 @@ async def crawl_page_by_id(page_id: str, current_user: dict = Depends(get_curren
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# -------------------- Debug & Test Routes --------------------
+@app.get("/api/debug/email-config")
+async def debug_email_config():
+    """Debug endpoint to check email configuration"""
+    email_enabled = os.getenv("EMAIL_ENABLED", "true").lower() == "true"
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    
+    return {
+        "email_enabled": email_enabled,
+        "resend_api_key_configured": bool(resend_api_key),
+        "resend_api_key_length": len(resend_api_key) if resend_api_key else 0,
+        "resend_from_email": os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev"),
+        "scheduler_email_enabled": getattr(monitoring_scheduler, 'email_enabled', 'Unknown'),
+        "scheduler_running": monitoring_scheduler.is_running,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.post("/api/test/email")
+async def test_email_send(request: Request):
+    """Test email sending manually"""
+    try:
+        import resend
+        resend_api_key = os.getenv("RESEND_API_KEY")
+        
+        if not resend_api_key:
+            return {
+                "success": False,
+                "error": "RESEND_API_KEY not configured",
+                "message": "Add RESEND_API_KEY to your .env file"
+            }
+        
+        resend.api_key = resend_api_key
+        
+        # Get test email from request body
+        data = await request.json()
+        test_email = data.get("email", "test@example.com")
+        
+        from_email = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
+        
+        params = {
+            "from": f"FreshLense Test <{from_email}>",
+            "to": [test_email],
+            "subject": "🧪 FreshLense Email Test",
+            "html": """
+            <!DOCTYPE html>
+            <html>
+            <body style="font-family: Arial, sans-serif; padding: 20px;">
+                <h2>🧪 FreshLense Email System Test</h2>
+                <p>If you receive this email, your FreshLense email system is working correctly!</p>
+                <div style="background: #f0f9ff; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                    <p><strong>System Status:</strong> ✅ Operational</p>
+                    <p><strong>Test Time:</strong> """ + datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC') + """</p>
+                </div>
+                <p>You will now receive:</p>
+                <ul>
+                    <li>Direct fact-check results</li>
+                    <li>Page change notifications</li>
+                    <li>Monitoring alerts</li>
+                </ul>
+            </body>
+            </html>
+            """,
+            "text": f"""FreshLense Email Test
+
+If you receive this email, your FreshLense email system is working correctly!
+
+System Status: ✅ Operational
+Test Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
+
+You will now receive:
+- Direct fact-check results
+- Page change notifications
+- Monitoring alerts
+
+This is a test email from FreshLense."""
+        }
+        
+        response = resend.Emails.send(params)
+        return {
+            "success": True,
+            "email_id": response['id'],
+            "recipient": test_email,
+            "message": f"Test email sent to {test_email}",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Failed to send test email. Check RESEND_API_KEY configuration."
+        }
+
 # -------------------- Health Check --------------------
 @app.get("/api/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow(), "scheduler_running": monitoring_scheduler.is_running}
+    """Health check endpoint with detailed status"""
+    return {
+        "status": "healthy", 
+        "timestamp": datetime.utcnow().isoformat(), 
+        "scheduler_running": monitoring_scheduler.is_running,
+        "email_enabled": getattr(monitoring_scheduler, 'email_enabled', False),
+        "version": "1.0.0"
+    }
 
 @app.get("/")
 async def root():
-    return {"message": "FreshLense API is running!"}
+    """Root endpoint with API information"""
+    return {
+        "message": "FreshLense API is running!",
+        "version": "1.0.0",
+        "endpoints": {
+            "documentation": "/docs",
+            "health": "/api/health",
+            "email_config": "/api/debug/email-config",
+            "test_email": "POST /api/test/email"
+        },
+        "features": {
+            "email_notifications": getattr(monitoring_scheduler, 'email_enabled', False),
+            "scheduler_active": monitoring_scheduler.is_running
+        }
+    }

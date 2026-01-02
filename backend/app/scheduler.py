@@ -1,9 +1,14 @@
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.errors import DuplicateKeyError, ConnectionFailure, ServerSelectionTimeoutError
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from bson import ObjectId
 from passlib.context import CryptContext
+import asyncio
+from typing import Optional
+import logging
+from difflib import SequenceMatcher
+import resend  # ✅ ADD RESEND IMPORT
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -71,6 +76,21 @@ def get_user_by_email(email: str):
         return None
     user = users_collection.find_one({"email": email})
     return user  # Return raw doc (main.py expects ObjectId format)
+
+
+def get_user_by_id(user_id):
+    """Get user by ID"""
+    if db is None:
+        return None
+    try:
+        # Handle both ObjectId and string user_id
+        if isinstance(user_id, str):
+            user_id = ObjectId(user_id)
+        user = users_collection.find_one({"_id": user_id})
+        return user
+    except Exception as e:
+        print(f"Error getting user by ID: {e}")
+        return None
 
 
 def create_user(user_data: dict):
@@ -185,7 +205,7 @@ def delete_tracked_page(page_id: str) -> bool:
 
 
 # ---------------- Page Versions ----------------
-def create_page_version(page_id: str, text_content: str, url: str):
+def create_page_version(page_id: str, text_content: str, url: str, html_content: str = None):
     """Create a new page version"""
     if db is None:
         return None
@@ -194,6 +214,7 @@ def create_page_version(page_id: str, text_content: str, url: str):
         "page_id": ObjectId(page_id),
         "timestamp": datetime.utcnow(),
         "text_content": text_content,
+        "html_content": html_content,  # Optional parameter
         "metadata": {
             "url": url,
             "content_length": len(text_content),
@@ -327,11 +348,6 @@ def get_latest_page_version(page_id: str):
 
 
 # ---------------- MonitoringScheduler Class ----------------
-import asyncio
-import threading
-from datetime import datetime, timedelta
-from typing import Optional
-import logging
 from .crawler import ContentFetcher
 
 logger = logging.getLogger(__name__)
@@ -351,6 +367,16 @@ class MonitoringScheduler:
         self.task: Optional[asyncio.Task] = None
         self._loop = None
         self.content_fetcher = ContentFetcher()  # Initialize the content fetcher
+        
+        # ✅ EMAIL CONFIGURATION
+        self.email_enabled = os.getenv("EMAIL_ENABLED", "true").lower() == "true"
+        if self.email_enabled:
+            resend.api_key = os.getenv("RESEND_API_KEY")
+            if not resend.api_key:
+                logger.warning("EMAIL_ENABLED is true but RESEND_API_KEY is missing")
+                self.email_enabled = False
+            else:
+                logger.info("✅ Email notifications enabled for scheduler")
         
     async def start(self):
         """Start the monitoring scheduler"""
@@ -449,21 +475,41 @@ class MonitoringScheduler:
                     
                 # Get the latest version for comparison
                 latest_version = get_latest_page_version(page_id)
+                old_content = latest_version.get("text_content", "") if latest_version else ""
                 
                 # Update last_checked timestamp
                 update_tracked_page(page_id, {"last_checked": datetime.utcnow()})
                 
-                # Check if content has changed
-                if latest_version and latest_version.get("text_content") == current_content:
+                # ✅ CHECK IF CONTENT HAS CHANGED
+                if latest_version and old_content == current_content:
                     # No change detected
                     return
                     
-                # Create new version
-                new_version = create_page_version(page_id, current_content, url)
+                # ✅ CALCULATE CHANGE PERCENTAGE
+                change_percentage = self._calculate_change_percentage(old_content, current_content)
+                
+                # 🚨 FIXED: Now passing 4 parameters instead of 3
+                new_version = create_page_version(
+                    page_id=page_id, 
+                    text_content=current_content, 
+                    url=url, 
+                    html_content=None  # ✅ ADDED: Fourth parameter
+                )
+                
                 if not new_version:
                     logger.error(f"Failed to create version for page {page_id}")
                     return
                     
+                # ✅ SEND EMAIL NOTIFICATION IF ENABLED
+                if self.email_enabled and change_percentage > 0:
+                    await self._send_change_notification(
+                        page=page,
+                        change_percentage=change_percentage,
+                        new_version=new_version,
+                        old_content_length=len(old_content),
+                        new_content_length=len(current_content)
+                    )
+                
                 # Update page with new version ID
                 update_data = {
                     "current_version_id": str(new_version["_id"]),
@@ -471,7 +517,7 @@ class MonitoringScheduler:
                 }
                 update_tracked_page(page_id, update_data)
                 
-                # Create change log
+                # Create change log with change percentage
                 change_data = {
                     "user_id": page["user_id"],
                     "page_id": page_id,
@@ -480,18 +526,221 @@ class MonitoringScheduler:
                     "details": {
                         "url": url,
                         "content_length": len(current_content),
-                        "previous_length": len(latest_version.get("text_content", "")) if latest_version else 0
+                        "previous_length": len(old_content),
+                        "change_percentage": change_percentage,
+                        "notification_sent": self.email_enabled
                     }
                 }
                 
                 change_log_id = create_change_log(change_data)
                 if change_log_id:
-                    logger.info(f"Change detected for page {page_id}: {url}")
+                    logger.info(f"Change detected for page {page_id}: {url} ({change_percentage}% change)")
                 else:
                     logger.error(f"Failed to create change log for page {page_id}")
                     
             except Exception as e:
                 logger.error(f"Error checking page {page.get('url', 'unknown')}: {e}")
+    
+    # ✅ ADDED: CALCULATE CHANGE PERCENTAGE
+    def _calculate_change_percentage(self, old_content: str, new_content: str) -> float:
+        """Calculate percentage of content changed"""
+        try:
+            if not old_content:
+                return 100.0  # First version is 100% change
+            
+            if not new_content:
+                return 0.0
+            
+            # Use difflib to calculate similarity
+            similarity = SequenceMatcher(None, old_content, new_content).ratio()
+            change_percentage = (1 - similarity) * 100
+            return round(change_percentage, 1)
+        except Exception as e:
+            logger.error(f"Error calculating change percentage: {e}")
+            return 0.0
+    
+    # ✅ ADDED: SEND CHANGE NOTIFICATION
+    async def _send_change_notification(self, page: dict, change_percentage: float, 
+                                       new_version: dict, old_content_length: int, 
+                                       new_content_length: int):
+        """Send email notification when page change is detected"""
+        try:
+            # Get user information
+            user = get_user_by_id(page["user_id"])
+            if not user or not user.get("email"):
+                logger.warning(f"No user or email found for page {page.get('_id')}")
+                return
+            
+            # Check user notification preferences
+            prefs = user.get("notification_preferences", {})
+            if not prefs.get("email_alerts", True):
+                logger.info(f"Email alerts disabled for user {user.get('email')}")
+                return
+            
+            user_email = user["email"]
+            page_title = page.get("display_name", page.get("url", "Monitored Page"))
+            page_url = page.get("url", "")
+            
+            # Determine change severity
+            if change_percentage > 50:
+                change_severity = "Major"
+                color = "#ef4444"  # Red
+            elif change_percentage > 20:
+                change_severity = "Moderate" 
+                color = "#f59e0b"  # Orange
+            else:
+                change_severity = "Minor"
+                color = "#10b981"  # Green
+            
+            # Get from email
+            from_email = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
+            
+            # Create email
+            params = {
+                "from": f"FreshLense <{from_email}>",
+                "to": [user_email],
+                "subject": f"🔄 {change_severity} Change Detected: {page_title[:40]}{'...' if len(page_title) > 40 else ''}",
+                "html": self._generate_change_email_html(
+                    page_title=page_title,
+                    page_url=page_url,
+                    change_percentage=change_percentage,
+                    change_severity=change_severity,
+                    color=color,
+                    old_length=old_content_length,
+                    new_length=new_content_length
+                ),
+                "text": self._generate_change_email_text(
+                    page_title=page_title,
+                    page_url=page_url,
+                    change_percentage=change_percentage,
+                    change_severity=change_severity,
+                    old_length=old_content_length,
+                    new_length=new_content_length
+                )
+            }
+            
+            # Send email
+            email = resend.Emails.send(params)
+            logger.info(f"✅ Change notification sent to {user_email} for {page_url} (ID: {email['id']})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to send change notification: {e}")
+            return False
+    
+    # ✅ ADDED: GENERATE HTML EMAIL
+    def _generate_change_email_html(self, page_title: str, page_url: str, 
+                                   change_percentage: float, change_severity: str, 
+                                   color: str, old_length: int, new_length: int) -> str:
+        """Generate HTML email template for change notifications"""
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, {color} 0%, #7c3aed 100%); padding: 30px; color: white; text-align: center; border-radius: 10px 10px 0 0;">
+                <h1 style="margin: 0; font-size: 24px;">🔄 {change_severity} Change Detected</h1>
+                <p style="margin: 10px 0 0 0; opacity: 0.9;">A monitored page has been updated</p>
+            </div>
+            
+            <div style="background: #f8f9fa; padding: 25px; border-radius: 0 0 10px 10px;">
+                <!-- Page Info -->
+                <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                    <h3 style="margin-top: 0; color: #333;">{page_title}</h3>
+                    <p style="color: #666; margin-bottom: 5px;">
+                        <strong>URL:</strong> <a href="{page_url}" style="color: #3b82f6;">{page_url}</a>
+                    </p>
+                    <p style="color: #666; margin: 0;">
+                        <strong>Detected:</strong> {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
+                    </p>
+                </div>
+                
+                <!-- Change Details -->
+                <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                    <h3 style="margin-top: 0; color: #333;">Change Analysis</h3>
+                    
+                    <div style="text-align: center; margin: 25px 0;">
+                        <div style="font-size: 48px; font-weight: bold; color: {color};">
+                            {change_percentage}%
+                        </div>
+                        <p style="color: #666; margin-top: 10px;">
+                            Content Change Detected
+                        </p>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 20px 0;">
+                        <div style="text-align: center; padding: 15px; background: #f0f9ff; border-radius: 8px;">
+                            <div style="font-size: 20px; font-weight: bold; color: #0ea5e9;">
+                                {old_length}
+                            </div>
+                            <div style="color: #666; font-size: 14px;">Previous Length</div>
+                        </div>
+                        
+                        <div style="text-align: center; padding: 15px; background: #f0f9ff; border-radius: 8px;">
+                            <div style="font-size: 20px; font-weight: bold; color: #0ea5e9;">
+                                {new_length}
+                            </div>
+                            <div style="color: #666; font-size: 14px;">New Length</div>
+                        </div>
+                    </div>
+                    
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; text-align: center;">
+                        <p style="margin: 0; color: #666; font-size: 14px;">
+                            <strong>Change Severity:</strong> <span style="color: {color}; font-weight: bold;">{change_severity}</span><br>
+                            {change_severity.lower()} changes may require your review
+                        </p>
+                    </div>
+                </div>
+                
+                <!-- Action Buttons -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px;">
+                    <a href="{page_url}" 
+                       style="display: block; background: #3b82f6; color: white; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; text-align: center;"
+                       target="_blank">
+                        🔍 View Updated Page
+                    </a>
+                    
+                    <a href="#" 
+                       style="display: block; background: #8b5cf6; color: white; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; text-align: center;"
+                       target="_blank">
+                        📊 Run Fact-Check
+                    </a>
+                </div>
+                
+                <!-- Footer -->
+                <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid #e9ecef; text-align: center;">
+                    <p style="color: #666; font-size: 12px; margin: 0;">
+                        You're receiving this email because you're monitoring this page with FreshLense.<br>
+                        <a href="#" style="color: #3b82f6; text-decoration: none;">Manage notification preferences</a>
+                    </p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+    
+    # ✅ ADDED: GENERATE PLAIN TEXT EMAIL
+    def _generate_change_email_text(self, page_title: str, page_url: str, 
+                                   change_percentage: float, change_severity: str,
+                                   old_length: int, new_length: int) -> str:
+        """Generate plain text email for change notifications"""
+        return f"""FreshLense Page Change Alert
+
+🚨 {change_severity} Change Detected
+
+📄 Page: {page_title}
+🔗 URL: {page_url}
+📊 Change Percentage: {change_percentage}%
+📏 Content Size: {old_length} → {new_length} characters
+🕐 Detected: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
+
+The content of this monitored page has changed. 
+{change_severity} changes may require your review.
+
+🔍 View updated page: {page_url}
+📊 Run fact-check in FreshLense app
+
+You're receiving this email because you're monitoring this page with FreshLense.
+Manage notification preferences in your account settings."""
                 
     async def _fetch_page_content(self, url: str) -> Optional[str]:
         """Fetch page content asynchronously using ContentFetcher"""
