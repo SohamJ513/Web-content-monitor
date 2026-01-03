@@ -350,6 +350,7 @@ def get_latest_page_version(page_id: str):
 # ---------------- MonitoringScheduler Class ----------------
 from .crawler import ContentFetcher
 
+# Set up logging for scheduler module
 logger = logging.getLogger(__name__)
 
 class MonitoringScheduler:
@@ -424,7 +425,8 @@ class MonitoringScheduler:
             if not pages:
                 return
                 
-            logger.info(f"Checking {len(pages)} pages for changes")
+            # Changed from logger.info to logger.debug
+            logger.debug(f"Checking {len(pages)} pages for changes")
             
             # Process pages concurrently (but limit concurrency)
             semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent requests
@@ -488,12 +490,12 @@ class MonitoringScheduler:
                 # ✅ CALCULATE CHANGE PERCENTAGE
                 change_percentage = self._calculate_change_percentage(old_content, current_content)
                 
-                # 🚨 FIXED: Now passing 4 parameters instead of 3
+                # Create new version
                 new_version = create_page_version(
                     page_id=page_id, 
                     text_content=current_content, 
                     url=url, 
-                    html_content=None  # ✅ ADDED: Fourth parameter
+                    html_content=None
                 )
                 
                 if not new_version:
@@ -767,10 +769,11 @@ Manage notification preferences in your account settings."""
         This is mainly for compatibility with main.py - the scheduler will pick up
         new pages automatically on its next check cycle
         """
-        logger.info(f"Page scheduled for monitoring: {page_doc.get('url', 'unknown')}")
+        logger.debug(f"Page scheduled for monitoring: {page_doc.get('url', 'unknown')}")
         # No immediate action needed - scheduler will pick it up automatically
         
     @property 
     def is_running(self) -> bool:
         """Property accessor to match main.py expectations"""
         return self.running
+        

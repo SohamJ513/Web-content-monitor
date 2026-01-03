@@ -7,6 +7,9 @@ from typing import Optional, Tuple
 import re
 import logging
 
+# Set up logger for this module
+logger = logging.getLogger(__name__)
+
 class ContentFetcher:
     def __init__(self):
         self.session = requests.Session()
@@ -14,12 +17,11 @@ class ContentFetcher:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 FreshLenseBot/1.0'
         })
         self.domain_delays = {}  # Track last request time per domain
-        self.logger = logging.getLogger(__name__)
 
     def fetch_url(self, url: str, max_retries: int = 3) -> Optional[str]:
         """Fetch HTML content from a URL with retries and error handling"""
         if not url or not url.startswith(('http://', 'https://')):
-            self.logger.error(f"Invalid URL format: {url}")
+            logger.error(f"Invalid URL format: {url}")
             return None
             
         domain = urlparse(url).netloc
@@ -32,47 +34,47 @@ class ContentFetcher:
         
         for attempt in range(max_retries):
             try:
-                print(f"🌐 Fetching {url} (attempt {attempt + 1})")
+                logger.debug(f"🌐 Fetching {url} (attempt {attempt + 1})")
                 response = self.session.get(url, timeout=15, allow_redirects=True)
                 response.raise_for_status()
                 
                 # Check content type
                 content_type = response.headers.get('content-type', '').lower()
                 if not any(ct in content_type for ct in ['text/html', 'text/plain', 'application/xhtml']):
-                    print(f"⚠️ Unsupported content type: {content_type}")
+                    logger.warning(f"Unsupported content type: {content_type}")
                     return None
                 
                 self.domain_delays[domain] = time.time()
-                print(f"✅ Successfully fetched {url} ({len(response.text)} bytes)")
+                logger.debug(f"✅ Successfully fetched {url} ({len(response.text)} bytes)")
                 return response.text
                 
             except requests.exceptions.Timeout:
-                print(f"⏰ Timeout on attempt {attempt + 1} for {url}")
+                logger.warning(f"⏰ Timeout on attempt {attempt + 1} for {url}")
             except requests.exceptions.ConnectionError:
-                print(f"🔌 Connection error on attempt {attempt + 1} for {url}")
+                logger.warning(f"🔌 Connection error on attempt {attempt + 1} for {url}")
             except requests.exceptions.HTTPError as e:
-                print(f"🚫 HTTP error on attempt {attempt + 1} for {url}: {e}")
+                logger.warning(f"🚫 HTTP error on attempt {attempt + 1} for {url}: {e}")
                 if e.response.status_code in [404, 403, 401]:
                     # Don't retry for client errors
                     break
             except requests.RequestException as e:
-                print(f"❌ Request failed on attempt {attempt + 1} for {url}: {e}")
+                logger.warning(f"❌ Request failed on attempt {attempt + 1} for {url}: {e}")
             
             if attempt < max_retries - 1:
                 wait_time = 2 ** attempt
-                print(f"⏳ Waiting {wait_time} seconds before retry...")
+                logger.debug(f"⏳ Waiting {wait_time} seconds before retry...")
                 time.sleep(wait_time)
             else:
-                print(f"💥 All attempts failed for {url}")
+                logger.error(f"💥 All attempts failed for {url}")
                 return None
 
     def extract_main_content(self, html: str, url: str) -> str:
         """Extract main content from HTML using BeautifulSoup"""
         if not html or not html.strip():
-            print("⚠️ Empty HTML content provided")
+            logger.warning("Empty HTML content provided")
             return ""
             
-        print(f"🔍 Extracting content from {url}")
+        logger.debug(f"🔍 Extracting content from {url}")
         
         try:
             soup = BeautifulSoup(html, 'html.parser')
@@ -109,7 +111,7 @@ class ContentFetcher:
                 if main_content:
                     text = main_content.get_text(separator='\n', strip=True)
                     if len(text) > 100:  # Increased threshold for meaningful content
-                        print(f"✅ Found content with selector '{selector}': {len(text)} characters")
+                        logger.debug(f"✅ Found content with selector '{selector}': {len(text)} characters")
                         cleaned_text = self.clean_text(text)
                         if len(cleaned_text) > 50:
                             return cleaned_text
@@ -129,7 +131,7 @@ class ContentFetcher:
             
             if meaningful_text:
                 combined_text = '\n'.join(meaningful_text)
-                print(f"✅ Found {len(meaningful_text)} meaningful elements: {len(combined_text)} characters")
+                logger.debug(f"✅ Found {len(meaningful_text)} meaningful elements: {len(combined_text)} characters")
                 cleaned = self.clean_text(combined_text)
                 if len(cleaned) > 50:
                     return cleaned
@@ -139,15 +141,14 @@ class ContentFetcher:
             cleaned_text = self.clean_text(all_text)
             
             if len(cleaned_text) > 50:
-                print(f"✅ Final fallback extraction: {len(cleaned_text)} characters")
+                logger.debug(f"✅ Final fallback extraction: {len(cleaned_text)} characters")
                 return cleaned_text
             else:
-                print("⚠️ No substantial content found")
+                logger.warning("No substantial content found")
                 return ""
                 
         except Exception as e:
-            print(f"💥 Content extraction failed for {url}: {e}")
-            self.logger.error(f"Content extraction error for {url}: {e}")
+            logger.error(f"💥 Content extraction failed for {url}: {e}")
             return ""
 
     def is_meaningful_text(self, text: str) -> bool:
@@ -189,7 +190,7 @@ class ContentFetcher:
         
         # If it matches technical patterns, be more lenient
         if any(re.search(pattern, text, re.IGNORECASE) for pattern in technical_patterns):
-            print(f"🔧 DEBUG: Allowing technical content: '{text}'")
+            logger.debug(f"🔧 Allowing technical content: '{text}'")
             return True
         
         return True
@@ -227,9 +228,9 @@ class ContentFetcher:
         result = re.sub(r'\n{3,}', '\n\n', result)  # Max 2 consecutive newlines
         result = re.sub(r' {2,}', ' ', result)  # Remove extra spaces
         
-        print(f"📝 DEBUG: Cleaned text length: {len(result)} characters")
+        logger.debug(f"📝 Cleaned text length: {len(result)} characters")
         if result:
-            print(f"📝 DEBUG: First 200 chars: {result[:200]}...")
+            logger.debug(f"📝 First 200 chars: {result[:200]}...")
         
         return result.strip()
 
@@ -252,8 +253,7 @@ class ContentFetcher:
                 return html, content
             return None, None
         except Exception as e:
-            print(f"💥 fetch_and_extract failed for {url}: {e}")
-            self.logger.error(f"fetch_and_extract error for {url}: {e}")
+            logger.error(f"💥 fetch_and_extract failed for {url}: {e}")
             return None, None
 
     def validate_url(self, url: str) -> bool:
@@ -301,5 +301,5 @@ class ContentFetcher:
             
             return metadata
         except Exception as e:
-            self.logger.error(f"Metadata extraction error for {url}: {e}")
+            logger.error(f"Metadata extraction error for {url}: {e}")
             return {}

@@ -18,7 +18,22 @@ import os
 # ✅ Load environment variables from .env file
 load_dotenv()
 
-# ✅ Import database + scheduler
+# ================================================
+# CRITICAL: Configure logging BEFORE any imports
+# ================================================
+
+# Disable ALL logging below WARNING level
+logging.basicConfig(
+    level=logging.WARNING,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Specifically silence common loggers
+logging.getLogger("uvicorn").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+
+# ✅ Import database + scheduler AFTER logging is configured
 from .database import (
     get_user_by_email, create_user, verify_password,
     get_tracked_pages, get_tracked_page, create_tracked_page, update_tracked_page,
@@ -33,9 +48,6 @@ from .crawler import ContentFetcher
 # ✅ Import routers
 from .routers import fact_check
 from .routers import auth  # ✅ ADDED: Import auth router
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 
 # JWT Settings
 SECRET_KEY = "your-secret-key-change-in-production"  # Change this in production!
@@ -172,6 +184,11 @@ async def lifespan(app: FastAPI):
     print("=" * 60)
     print("🚀 Starting FreshLense API...")
     print("=" * 60)
+    
+    # ✅ CRITICAL: Silence scheduler and crawler logs
+    logging.getLogger("app.scheduler").setLevel(logging.WARNING)
+    logging.getLogger("app.crawler").setLevel(logging.WARNING)
+    logging.getLogger("app.services").setLevel(logging.WARNING)
     
     # ✅ CHECK SERP API CONFIGURATION
     serp_api_key = os.getenv("SERPAPI_API_KEY")
@@ -593,3 +610,4 @@ async def root():
             "scheduler_active": monitoring_scheduler.is_running
         }
     }
+    
