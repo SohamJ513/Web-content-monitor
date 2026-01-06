@@ -610,4 +610,3 @@ async def root():
             "scheduler_active": monitoring_scheduler.is_running
         }
     }
-    

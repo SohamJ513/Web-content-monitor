@@ -776,4 +776,3 @@ Manage notification preferences in your account settings."""
     def is_running(self) -> bool:
         """Property accessor to match main.py expectations"""
         return self.running
-        
